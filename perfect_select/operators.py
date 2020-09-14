@@ -292,8 +292,8 @@ class PERFECT_SELECT_OT_perfect_select(PerfectSelectOperatorProperties, Operator
             bm.select_flush(value)
 
     def select(self, context, use_snap, snap_elements, snap_edge_slide, snap_backface_culling):
-        def _set_original_selection(geom):
-            if self._geom_selected_original is None:
+        def _set_original_selection(geom, force=False):
+            if self._geom_selected_original is None or force:
                 self._geom_selected_original = geom
 
         def _add_persistent_selection(geom):
@@ -407,7 +407,7 @@ class PERFECT_SELECT_OT_perfect_select(PerfectSelectOperatorProperties, Operator
             co = self._snap_point
             self.select_operator(co[0], co[1], mode="SET")
 
-        if self.align_to_normal and selection_normal is not None:
+        if self.align_to_normal and not self.wait_for_input and selection_normal is not None:
             bpy.ops.mesh.select_all(action='DESELECT')
             old_view_location = rv3d.view_location.copy()
             rv3d.view_location = view_location
@@ -427,7 +427,7 @@ class PERFECT_SELECT_OT_perfect_select(PerfectSelectOperatorProperties, Operator
 
         self._mirror(context)
 
-        if self.use_preselect:
+        if self.use_preselect and not self.wait_for_input:
             self._clean_tags(context)
 
         _add_persistent_selection(g for g in self._get_bms_geom_iter(context) if g.select)
@@ -454,6 +454,10 @@ class PERFECT_SELECT_OT_perfect_select(PerfectSelectOperatorProperties, Operator
 
         self._select_flush()
         self._set_continue = True
+
+        if self.wait_for_input:
+            _set_original_selection([g for g in self._get_bms_geom_iter(context) if g.select], True)
+            self._clean_tags(context)
 
     def _clean(self):
         self._del_loop()
