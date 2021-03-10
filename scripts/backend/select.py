@@ -1,129 +1,165 @@
 import bpy
 import bmesh
+from . import get_backend_module
 
-from itertools import chain
-
-from bpy.types import Operator
-from mathutils import Vector, Matrix
-
-from .properties import (PerfectSelectOperatorProperties, ExtendToEdgeLoopsOperatorProperties,
-                         get_selection_pattern_buffer)
-from .user_interface import perfect_select_draw_callback
-from .math_utils import (matrix_decompose_4x4, is_backface, create_kdtree, intersect_point_section_2d,
-                         points_3d_to_region_2d, points_pairs_3d_to_region_2d, region_2d_to_points_3d)
+from .utils import (matrix_decompose_4x4, is_backface,
+                    create_kdtree, intersect_point_section_2d,
+                    points_3d_to_region_2d, points_pairs_3d_to_region_2d,
+                    region_2d_to_points_3d)
 
 
-class PERFECT_SELECT_OT_extend_to_edge_loops(ExtendToEdgeLoopsOperatorProperties, Operator):
-    bl_label = "Extend to Boundary Loops"
-    bl_idname = "perfect_select.extend_to_edge_loops"
-    bl_options = {'UNDO', 'REGISTER'}
+#
+# Extend to edge loops functions
+#
 
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
+def extend_to_edge_loops_execute(context, operator):
+    # C++ module execution
+    try:
+        result = cpp_extend_to_edge_loops(context, operator)
+    except RuntimeError:
+        # Python fallback
+        result = py_extend_to_edge_loops(context, operator)
+    return result
 
-    def invoke(self, context, event):
-        return self.execute(context)
 
-    def execute(self, context):
-        self._bms = {}
-        original_faces_selection = []
-        original_select_modes = []
-        tool_select_mode = context.tool_settings.mesh_select_mode[:]
-        context.tool_settings.mesh_select_mode = (False, True, True)
-        for obj in context.objects_in_mode_unique_data:
-            obj.update_from_editmode()
-            bm = self._bms[obj] = bmesh.from_edit_mesh(obj.data)
-            original_faces_selection.append([f for f in bm.faces if f.select])
-            original_select_modes.append(bm.select_mode)
+def cpp_extend_to_edge_loops(context, operator):
+    backend_module = get_backend_module()
+    if not backend_module:
+        raise RuntimeError
 
-        bpy.ops.mesh.region_to_loop('EXEC_DEFAULT')
+    # call extend_to_edge_loops from backend/module.cpp
+    return backend_module.extend_to_edge_loops(context.as_pointer(), operator.as_pointer())
 
-        obj_selected_edges = []
-        for obj, bm in self._bms.items():
-            selected_edges = [e for e in bm.edges if e.select]
-            self.tag_boundary_loops(bm)
-            obj_selected_edges.append(selected_edges)
 
-        bpy.ops.mesh.select_all(action='DESELECT')
-        context.tool_settings.mesh_select_mode = tool_select_mode
+def py_extend_to_edge_loops(context, operator):
+    prop_inner = operator.inner
+    mesh_select_mode = context.tool_settings.mesh_select_mode[:]
 
-        for idx, (obj, bm) in enumerate(self._bms.items()):
-            original_faces = original_faces_selection[idx]
-            selected_edges = obj_selected_edges[idx]
+    obj_selected_faces = []
+    obj_bm = []
+    for obj in context.objects_in_mode_unique_data:
+        obj.update_from_editmode()
+        bm = bmesh.from_edit_mesh(obj.data)
+        obj_selected_faces.append([f for f in bm.faces if f.select])
+        obj_bm.append(bm)
 
-            self.search_in_outer_faces(selected_edges, original_faces, select=True)
+    obj_boundary_edges = get_region_to_loop_edges(obj_bm)
+    obj_loop_edges = get_loop_edges(obj_bm)
 
-            bm.select_mode = original_select_modes[idx]
-            bm.select_flush_mode()
+    bpy.ops.mesh.select_all(action='DESELECT')
+    context.tool_settings.mesh_select_mode = mesh_select_mode
 
-            self.clean_tags(bm)
+    for idx, bm in enumerate(obj_bm):
+        if prop_inner:
+            select_faces_in_boundary_loop(bm, obj_selected_faces[idx], obj_boundary_edges[idx], obj_loop_edges[idx])
+        else:
+            select_faces_out_boundary_loop(bm, obj_selected_faces[idx], obj_boundary_edges[idx], obj_loop_edges[idx])
 
-        return {'FINISHED'}
 
-    @classmethod
-    def search_in_outer_faces(self, selected_edges, selected_faces,  *, select=False):
-        outer_faces = []
-        for edge in selected_edges:
-            for face in edge.link_faces:
-                if face not in outer_faces and face not in selected_faces:
-                    outer_faces.append(face)
+def select_faces_in_boundary_loop(bm, selected_faces, boundary_edges, loop_edges):
+    pass
 
-        faces_to_select = []
-        while outer_faces:
-            face = outer_faces.pop()
-            face_verts_on_selection = [v for e in face.edges for v in e.verts if e in selected_edges]
 
-            counter = 0
-            for edge in face.edges:
-                if edge in selected_edges:
-                    counter += 1
-                if counter <= 1 and any(True for v in edge.verts if v in face_verts_on_selection):
-                    continue
-                if counter > 1 or edge.tag:
-                    break
-            else:
+def select_faces_out_boundary_loop(bm, selected_faces, boundary_edges, loop_edges):
+    extra_edges = []
+
+    for f in selected_faces:
+        f.select_set(True)
+
+    for e in boundary_edges:
+        for f in e.link_faces:
+            if f.select:
                 continue
+            faces_out_to_boundary_loop__iter_loops(f, extra_edges, boundary_edges, loop_edges)
 
-            faces_to_select.append(face)
-            if select:
-                face.select = True
-
-            selected_faces.append(face)
-            for edge in face.edges:
-                if edge in selected_edges:
-                    selected_edges.remove(edge)
-                else:
-                    selected_edges.append(edge)
-                    for _face in edge.link_faces:
-                        if _face not in outer_faces and _face not in faces_to_select and _face not in selected_faces:
-                            outer_faces.append(_face)
-        if select:
-            for face in selected_faces:
-                face.select = True
-
-        return faces_to_select
-
-    @classmethod
-    def tag_boundary_loops(cls, bm):
-        bpy.ops.mesh.loop_multi_select('EXEC_DEFAULT')
-        for e in bm.edges:
-            if e.select:
-                e.tag = True
-
-    @staticmethod
-    def clean_tags(bm):
-        for e in bm.edges:
-            if e.tag:
-                e.tag = False
+    while extra_edges:
+        e = extra_edges.pop()
+        for f in e.link_faces:
+            if f.select:
+                continue
+            faces_out_to_boundary_loop__iter_loops(f, extra_edges, boundary_edges, loop_edges)
 
 
-class PERFECT_SELECT_OT_perfect_select(PerfectSelectOperatorProperties, Operator):
-    bl_label = "Perfect Select"
-    bl_idname = "perfect_select.perfect_select"
-    bl_options = {'UNDO'}
+def faces_out_to_boundary_loop__iter_loops(f, extra_edges, boundary_edges, loop_edges):
+    for l in f.loops:
+        if l.edge not in boundary_edges:
+            continue
+        if l.link_loop_next.edge in boundary_edges or l.link_loop_next.link_loop_next.edge in loop_edges:
+            f.select_set(True)
+            for e in f.edges:
+                if e not in boundary_edges:
+                    boundary_edges.append(e)
+                    extra_edges.append(e)
 
+
+def get_region_to_loop_edges(bms):
+    bpy.ops.mesh.region_to_loop('EXEC_DEFAULT')
+    return [[e for e in bm.edges if e.select] for bm in bms]
+
+
+def get_loop_edges(bms):
+    bpy.ops.mesh.loop_multi_select('EXEC_DEFAULT')
+    return [[e for e in bm.edges if e.select] for bm in bms]
+
+
+#
+# Selection and snapping functions
+#
+
+def perfect_select_invoke(context, event, operator):
+    return
+
+
+def perfect_select_execute(context, operator):
+    # C++ module execution
+    try:
+        result = cpp_perfect_select(context, operator)
+    except RuntimeError:
+        # Python fallback
+        result = py_perfect_select(context, operator)
+    return result
+
+
+def perfect_select_modal(context, event, operator):
+    pass
+
+
+def cpp_perfect_select(context, operator):
+    backend_module = get_backend_module()
+    if not backend_module:
+        raise RuntimeError
+
+    # call extend_to_edge_loops from backend/module.cpp
+    return backend_module.perfect_select(context.as_pointer(), operator.as_pointer())
+
+
+def py_perfect_select(context, operator):
+    return {"FINISHED"}
+
+
+#
+# Selection and snapping functions
+#
+
+def select_operator(self, x=None, y=None, radius=None, mode=None):
+    x = x or self.x
+    y = y or self.y
+    radius = radius or self.radius
+    mode = mode or self.mode
+
+    tool_settings = bpy.context.scene.perfect_select_tool_settings
+    if tool_settings.pattern_source == "CIRCLE":
+        bpy.ops.view3d.select_circle('EXEC_DEFAULT', x=x, y=y,
+                                     wait_for_input=False, mode=mode, radius=radius)
+    else:
+        bpy.ops.view3d.select_box('EXEC_DEFAULT', xmin=x-radius, xmax=x+radius, ymin=y-radius, ymax=y+radius,
+                                  wait_for_input=False, mode=mode)
+
+
+
+#################
+
+class D:
     @staticmethod
     def _get_mouse_region_pos(event):
         return event.mouse_region_x, event.mouse_region_y
@@ -210,10 +246,13 @@ class PERFECT_SELECT_OT_perfect_select(PerfectSelectOperatorProperties, Operator
     def _get_bms_geom_iter(self, context):
         def _get_seqs(bm):
             if "VERT" in select_mode:
+                bm.verts.ensure_lookup_table()
                 yield from bm.verts
             if "EDGE" in select_mode:
+                bm.edges.ensure_lookup_table()
                 yield from bm.edges
             if "FACE" in select_mode:
+                bm.faces.ensure_lookup_table()
                 yield from bm.faces
 
         select_mode = self._bms[context.object].select_mode
@@ -293,6 +332,12 @@ class PERFECT_SELECT_OT_perfect_select(PerfectSelectOperatorProperties, Operator
 
     def select(self, context, use_snap, snap_elements, snap_edge_slide, snap_backface_culling):
         def _set_original_selection(geom, force=False):
+            if self._geom_selected_original is not None and not force:
+                for _element in self._geom_selected_original:
+                    if not _element.is_valid:
+                        self._geom_selected_original = None
+                        break
+
             if self._geom_selected_original is None or force:
                 self._geom_selected_original = geom
 
@@ -480,119 +525,13 @@ class PERFECT_SELECT_OT_perfect_select(PerfectSelectOperatorProperties, Operator
         tool = context.workspace.tools.from_space_view3d_mode(context.mode)
         return tool if tool.idname == "perfect_select.perfect_select_tool" else None
 
-    def _check_init_attribs(self):
+    def _check_init_attribs(self, force=False):
         names = ("_set_continue", "_bms", "_snap_point", "_snap_edge", "_snap_edge_co", "_loop",
                  "_geom_selected_original", "_extend_to_loop", "_select_enabled", "_pattern_buffer")
         for name in names:
-            if not hasattr(self, name):
+            if force or not hasattr(self, name):
                 setattr(self, name, None)
 
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
-
-    def invoke(self, context, event):
-        self._check_init_attribs()
-        self.draw_area = context.area
-        self.x, self.y = self._get_mouse_region_pos(event)
-        ps_tool_settings = self._get_tool_settings(context)
-        ps_tool_settings.show_select_cursor = False
-
-        if not self.wait_for_input:
-            if ps_tool_settings.pattern_source in ("OBJECT", "IMAGE"):
-                self._pattern_buffer = get_selection_pattern_buffer(ps_tool_settings.pattern_resolution)
-
-            if self.mode == "SET":
-                tool = self._get_ps_tool(context)
-                if tool is not None:
-                    props = tool.operator_properties("perfect_select.perfect_select")
-                    self.mode = props.mode
-            self.execute(context)
-        else:
-            self._select_enabled = False
-
-        wm = context.window_manager
-        if context.area.type == 'VIEW_3D':
-            ws = context.workspace
-            ws.status_text_set(self._get_status_text())
-
-            handler_args = (self, context)
-            self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(perfect_select_draw_callback,
-                                                                       handler_args,
-                                                                       'WINDOW', 'POST_PIXEL')
-            wm.modal_handler_add(self)
-
-        return {'RUNNING_MODAL'}
-
-    def execute(self, context):
-        self._check_init_attribs()
-        self.select(*self._get_select_args(context))
-        return {'FINISHED'}
-
-    def modal(self, context, event):
-        context.area.tag_redraw()
-        ps_tool_settings = self._get_tool_settings(context)
-
-        if not self.wait_for_input and event.type in ['LEFT_SHIFT', 'LEFT_CTRL']:
-            if event.value == 'PRESS':
-                self._extend_to_loop = event.shift
-            if event.value == 'RELEASE':
-                self._extend_to_loop = None
-
-        if event.type in {'RIGHTMOUSE', 'ESC'}:
-            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, 'WINDOW')
-            ps_tool_settings.show_select_cursor = True
-            self._clean_status_text(context)
-            self._clean_tags(context)
-            return {'CANCELLED'}
-
-        if event.type in ['MOUSEMOVE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'LEFT_SHIFT', 'LEFT_CTRL']:
-            self.x, self.y = self._get_mouse_region_pos(event)
-            if (self.wait_for_input and self._select_enabled) or not self.wait_for_input:
-                self.execute(context)
-
-        if event.type in ('WHEELUPMOUSE', 'WHEELDOWNMOUSE') and not event.ctrl:
-            self.radius += 5 if event.type == 'WHEELDOWNMOUSE' else -5
-            return {'RUNNING_MODAL'}
-
-        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            self._select_enabled = True
-            if event.shift and self.wait_for_input:
-                self.mode = "SUB"
-            self.execute(context)
-
-        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
-            if self.wait_for_input:
-                self._select_enabled = False
-                self.mode = "ADD"
-                self._clean()
-                return {'RUNNING_MODAL'}
-            else:
-                self._clean_status_text(context)
-
-            self.wait_for_input = True
-            self.mode = "ADD"
-            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, 'WINDOW')
-            ps_tool_settings.show_select_cursor = True
-            self._clean_tags(context)
-            return {'FINISHED'}
-
-        if event.type == 'LEFTMOUSE' and event.shift and event.value == 'RELEASE':
-            if self.wait_for_input:
-                self._select_enabled = False
-                self.mode = "ADD"
-                self._clean()
-                return {'RUNNING_MODAL'}
-
-        if event.type == "RET" and event.value == 'PRESS':
-            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, 'WINDOW')
-            self.wait_for_input = True
-            ps_tool_settings.show_select_cursor = True
-            self._clean_tags(context)
-            return {'FINISHED'}
-
-        return {'RUNNING_MODAL'}
 
     def _get_status_text(self):
         elements = [("WhDown/Pad+", "Add"),
@@ -604,66 +543,14 @@ class PERFECT_SELECT_OT_perfect_select(PerfectSelectOperatorProperties, Operator
             input_elements = [("LMB", "Select"), ("Shift⇧ LMB", "Deselect")]
             elements = release_elements + elements + input_elements
         else:
-            extend_elements = [("Shift⇧", "Extend to Boundary Loops"),
-                               # ("Ctrl", "Reduce to Boundary Loops")
+            extend_elements = [("Shift⇧", "Extend to Widest Boundary Loops"),
+                               # ("Ctrl", "Reduce to Narrowest Boundary Loops")
                                ]
             elements.extend(extend_elements)
 
         return "        ".join("[{}] {}".format(*e) for e in elements)
 
-
-def perfect_select_keymap():
-    items = []
-    keymap = (
-        "perfect_select.perfect_select_keymap",
-        {"space_type": 'VIEW_3D', "region_type": 'WINDOW'},
-        {"items": items},
-    )
-
-    items.extend([
-        ("perfect_select.perfect_select",
-         {"type": 'LEFTMOUSE', "value": 'PRESS'},
-         {"properties": [("wait_for_input", False), ("mode", "SET")]}),
-        ("perfect_select.perfect_select",
-         {"type": 'LEFTMOUSE', "value": 'PRESS', "ctrl": True},
-         {"properties": [("wait_for_input", False), ("mode", "SUB")]}),
-    ])
-
-    return keymap
-
-
-keymaps = []
-
-
-def register_keymaps():
-    from bl_keymap_utils.io import keyconfig_init_from_data
-    wm = bpy.context.window_manager
-
-    keymap = perfect_select_keymap()
-
-    kc = wm.keyconfigs.addon
-    keyconfig_init_from_data(kc, [keymap])
-    keymaps.append((kc, kc.keymaps[keymap[0]]))
-
-    kc = wm.keyconfigs.default
-    keyconfig_init_from_data(kc, [keymap])
-    keymaps.append((kc, kc.keymaps[keymap[0]]))
-
-
-def unregister_keymaps():
-    for (kc, km) in keymaps:
-        kc.keymaps.remove(km)
-
-
-def register():
-    from bpy.utils import register_class
-    register_class(PERFECT_SELECT_OT_extend_to_edge_loops)
-    register_class(PERFECT_SELECT_OT_perfect_select)
-    register_keymaps()
-
-
-def unregister():
-    from bpy.utils import unregister_class
-    unregister_class(PERFECT_SELECT_OT_perfect_select)
-    unregister_class(PERFECT_SELECT_OT_extend_to_edge_loops)
-    unregister_keymaps()
+    @staticmethod
+    def get_ps_tool(context):
+        tool = context.workspace.tools.from_space_view3d_mode(context.mode)
+        return tool if tool.idname == "perfect_select.perfect_select_tool" else None

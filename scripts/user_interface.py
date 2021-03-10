@@ -1,13 +1,51 @@
 import os
 import bpy
-from bpy.utils.toolsystem import ToolDef
+
+from bpy.types import WorkSpaceTool
 from gpu_extras.presets import draw_circle_2d
+from bl_keymap_utils.io import keyconfig_init_from_data
+from bl_ui.space_toolsystem_common import _icon_cache
 
 from .previews import get_preview
 
 
-@ToolDef.from_fn
-def perfect_select_tool():
+keymaps = []
+
+
+def perfect_select_keymap():
+    items = []
+    keymap = (
+        "perfect_select.perfect_select_keymap",
+        {"space_type": 'VIEW_3D', "region_type": 'WINDOW'},
+        {"items": items},
+    )
+
+    items.extend([
+        ("perfect_select.perfect_select",
+         {"type": 'LEFTMOUSE', "value": 'PRESS'},
+         {"properties": [("wait_for_input", False), ("mode", "SET")]}),
+        ("perfect_select.perfect_select",
+         {"type": 'LEFTMOUSE', "value": 'PRESS', "ctrl": True},
+         {"properties": [("wait_for_input", False), ("mode", "SUB")]}),
+    ])
+
+    return keymap
+
+
+class PerfectSelectTool(WorkSpaceTool):
+    bl_space_type = 'VIEW_3D'
+    bl_context_mode = 'EDIT_MESH'
+
+    bl_idname = "perfect_select.perfect_select_tool"
+    bl_label = "Perfect Select"
+    bl_description = (
+        "Perfect Select\n"
+        "with multiple lines"
+    )
+    bl_icon = "ops.perfect_select.perfect_select"
+    bl_widget = None
+    bl_keymap = "perfect_select.perfect_select_keymap"
+
     def draw_settings(context, layout, tool):
         reg = context.region.type
         is_header = reg == 'TOOL_HEADER'
@@ -16,9 +54,17 @@ def perfect_select_tool():
         row = layout.row()
         row.use_property_split = False
         row.prop(props, "mode", text="", expand=True, icon_only=True)
+        row.separator(factor=1.0)
+
+        sub = row.row()
+        sub.scale_x = 0.5
+        sub.label(icon='MOD_MIRROR')
+        sub.separator(factor=0)
+        sub.prop(props, "mirror", expand=True, toggle=True, text="")
 
         tool_settings = bpy.context.scene.perfect_select_tool_settings
         sub = layout if is_header else layout.column(align=True)
+
         sub.prop(tool_settings, "pattern_source")
         if tool_settings.pattern_source == "OBJECT":
             sub.prop(tool_settings, "pattern_data")
@@ -44,49 +90,11 @@ def perfect_select_tool():
     def draw_cursor(context, tool, xy):
         if not hasattr(context.scene, "perfect_select_tool_settings"):
             return
-
-        if context.scene.perfect_select_tool_settings.show_select_cursor:
+        ps_tool_settings = context.scene.perfect_select_tool_settings
+        if ps_tool_settings.show_select_cursor:
+            ps_tool_settings.update_snap_co(xy)
             props = tool.operator_properties("perfect_select.perfect_select")
             draw_circle_2d(xy, (1.0,) * 4, props.radius, 32)
-
-    return dict(
-        idname="perfect_select.perfect_select_tool",
-        label="Perfect Select",
-        description=(
-            "Select"
-        ),
-        icon="ops.perfect_select.perfect_select",
-        keymap="perfect_select.perfect_select_keymap",
-        operator="perfect_select.perfect_select",
-        draw_settings=draw_settings,
-        draw_cursor=draw_cursor
-    )
-
-
-def get_tool_list(space_type, context_mode):
-    from bl_ui.space_toolsystem_common import ToolSelectPanelHelper
-    cls = ToolSelectPanelHelper._tool_class_from_space_type(space_type)
-    return cls._tools[context_mode]
-
-
-def register_tool():
-    tools = get_tool_list('VIEW_3D', 'EDIT_MESH')
-    for index, tool in enumerate(tools, 1):
-        if isinstance(tool, ToolDef) and tool.label == "Cursor":
-            break
-    tools[:index] += None, perfect_select_tool
-
-
-def unregister_tool():
-    tools = get_tool_list('VIEW_3D', 'EDIT_MESH')
-
-    index = tools.index(perfect_select_tool) - 1
-    tools.pop(index)
-    tools.remove(perfect_select_tool)
-
-    active_tool = bpy.context.workspace.tools.from_space_view3d_mode("EDIT_MESH", create=False)
-    if active_tool is not None and active_tool.idname == "perfect_select.perfect_select_tool":
-        bpy.ops.wm.tool_set_by_id(name="builtin.select_circle")
 
 
 def perfect_select_menu(self, context):
@@ -120,18 +128,40 @@ def perfect_select_draw_callback(self, context):
     draw_circle_2d(co, (1.0,) * 4, self.radius, 32)
 
 
+def register_keymaps():
+    wm = bpy.context.window_manager
+
+    keymap = perfect_select_keymap()
+
+    kc = wm.keyconfigs.addon
+    keyconfig_init_from_data(kc, [keymap])
+    keymaps.append((kc, kc.keymaps[keymap[0]]))
+
+    kc = wm.keyconfigs.default
+    keyconfig_init_from_data(kc, [keymap])
+    keymaps.append((kc, kc.keymaps[keymap[0]]))
+
+
+def unregister_keymaps():
+    for (kc, km) in keymaps:
+        try:
+            kc.keymaps.remove(km)
+        except RuntimeError:
+            pass
+
+
 def register():
-    from bl_ui.space_toolsystem_common import _icon_cache
     bpy.types.VIEW3D_PT_snapping.append(perfect_select_snapping_panel)
     bpy.types.VIEW3D_MT_select_edit_mesh.append(perfect_select_menu)
 
     icon_filename = os.path.join(os.path.dirname(__file__), "datafiles", "ops.perfect_select.perfect_select.dat")
     _icon_cache['ops.perfect_select.perfect_select'] = bpy.app.icons.new_triangles_from_file(icon_filename)
-    register_tool()
+    register_keymaps()
+    bpy.utils.register_tool(PerfectSelectTool, after={"builtin.select_lasso"}, separator=False, group=False)
 
 
 def unregister():
-    unregister_tool()
+    bpy.utils.unregister_tool(PerfectSelectTool)
+    unregister_keymaps()
     bpy.types.VIEW3D_PT_snapping.remove(perfect_select_snapping_panel)
     bpy.types.VIEW3D_MT_select_edit_mesh.remove(perfect_select_menu)
-

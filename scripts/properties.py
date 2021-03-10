@@ -1,10 +1,14 @@
 import bpy
 import os
 import numpy
+import addon_utils
 
-from bpy.props import EnumProperty, BoolProperty, IntProperty, FloatVectorProperty, StringProperty, PointerProperty
+from bpy.props import (EnumProperty, BoolProperty, BoolVectorProperty,
+                       IntProperty, FloatVectorProperty, StringProperty, PointerProperty)
 
+from .backend import get_platform_backend_modules, get_default_module_name, import_backend_module
 from .previews import render_preview, get_preview, PREVIEW_WIDTH, PREVIEW_HEIGHT
+from .backend.utils import create_bvhtree, get_unique_objects
 
 
 def _create_tmp_scene_and_render(context, obj, axis, resolution):
@@ -98,7 +102,7 @@ def filter_images(self, image):
 
 
 class ExtendToEdgeLoopsOperatorProperties:
-    pass
+    inner: BoolProperty(default=False)
 
 
 class PerfectSelectOperatorProperties:
@@ -115,6 +119,8 @@ class PerfectSelectOperatorProperties:
                                      description="Align selection area to faces normal.")
     use_preselect:      BoolProperty(name="Preselect", default=False,
                                      description="Apply selection after button release.")
+    mirror:             BoolVectorProperty(name="Mirror", default=(False, False, False),
+                                           description="Selection mirror", subtype="XYZ")
 
 
 class PerfectSelectToolSettings(bpy.types.PropertyGroup):
@@ -147,12 +153,55 @@ class PerfectSelectToolSettings(bpy.types.PropertyGroup):
                                                     ("IMAGE", "Image", "Image"),),
                                              default="CIRCLE", update=update_preview)
 
+    snap_bvh = None
+    snap_co = None
+
+    @classmethod
+    def create_snap_bvh(cls):
+        cls.snap_bvh = []
+        for obj in get_unique_objects():
+            cls.snap_bvh.append(create_bvhtree(obj, bpy.context.evaluated_depsgraph_get()))
+
+    @classmethod
+    def update_snap_co(cls, xy):
+        if not cls.snap_bvh:
+            cls.create_snap_bvh()
+
+
+def update_backend_module(self, context):
+    import_backend_module()
+
+
+class PerfectSelectAddonPreferences(bpy.types.AddonPreferences):
+    bl_idname = __package__
+
+    default_backend_module = get_default_module_name()
+    backend_module: bpy.props.EnumProperty(
+        name="Backend Module",
+        items=[("default", "Auto", f"Use {default_backend_module}" if default_backend_module else "Use Python"),
+               ("none", "Python", "Use only python scripts - slower but version independent")
+               ] + [(m, m, '') for m in get_platform_backend_modules()],
+        update=update_backend_module
+    )
+
+    def draw(self, context):
+        layout = self.layout
+        row = layout.row()
+        row.prop(self, 'backend_module')
+
+        # if self.default_backend_module is None:
+        #    addon_fake_module = addon_utils.addons_fake_modules['perfect_select']
+        #    addon_fake_module.bl_info['warning'] = "Compiled module cannot be found. " \
+        #                                           "Your Blender version may not be supported in this addon release."
+
 
 def register():
     bpy.utils.register_class(PerfectSelectToolSettings)
+    bpy.utils.register_class(PerfectSelectAddonPreferences)
     bpy.types.Scene.perfect_select_tool_settings = bpy.props.PointerProperty(type=PerfectSelectToolSettings)
 
 
 def unregister():
     del bpy.types.Scene.perfect_select_tool_settings
+    bpy.utils.unregister_class(PerfectSelectAddonPreferences)
     bpy.utils.unregister_class(PerfectSelectToolSettings)

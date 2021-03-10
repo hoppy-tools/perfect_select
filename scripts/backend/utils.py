@@ -1,7 +1,9 @@
+import bpy
 from bpy_extras.view3d_utils import region_2d_to_location_3d, region_2d_to_vector_3d, location_3d_to_region_2d
 from mathutils import Vector, Matrix
 from mathutils.geometry import intersect_point_line, intersect_line_line
 from mathutils.kdtree import KDTree
+from mathutils.bvhtree import BVHTree
 
 
 def matrix_decompose_4x4(matrix):
@@ -53,3 +55,10 @@ def create_kdtree(points):
     kd.balance()
     return kd
 
+
+def create_bvhtree(object, depsgraph, **kwargs):
+    return BVHTree.FromObject(object, depsgraph, **kwargs)
+
+
+def get_unique_objects(data_type='MESH'):
+    return [o for o in bpy.context.objects_in_mode_unique_data if o.type == data_type]

@@ -1,12 +1,14 @@
 bl_info = {
     "name": "Perfect Select",
     "author": "Dawid Czech",
-    "version": (1, 0),
+    "version": (1, 1),
     "blender": (2, 83, 0),
-    "category": "Mesh"
+    "category": "Mesh",
 }
 
 from bpy import utils
+from .backend import get_default_module_name
+
 
 submodules = ['properties', 'operators', 'previews', 'user_interface']
 
