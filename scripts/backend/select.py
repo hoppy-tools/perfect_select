@@ -55,6 +55,8 @@ def py_extend_to_edge_loops(context, operator):
         else:
             select_faces_out_boundary_loop(bm, obj_selected_faces[idx], obj_boundary_edges[idx], obj_loop_edges[idx])
 
+    return {'FINISHED'}
+
 
 def select_faces_in_boundary_loop(bm, selected_faces, boundary_edges, loop_edges):
     pass
@@ -107,7 +109,7 @@ def get_loop_edges(bms):
 #
 
 def perfect_select_invoke(context, event, operator):
-    return
+    operator.x, operator.y = Helper.get_mouse_region_pos(event)
 
 
 def perfect_select_execute(context, operator):
@@ -137,10 +139,6 @@ def py_perfect_select(context, operator):
     return {"FINISHED"}
 
 
-#
-# Selection and snapping functions
-#
-
 def select_operator(self, x=None, y=None, radius=None, mode=None):
     x = x or self.x
     y = y or self.y
@@ -157,11 +155,13 @@ def select_operator(self, x=None, y=None, radius=None, mode=None):
 
 
 
-#################
+#
+# Helpers
+#
 
-class D:
+class Helper:
     @staticmethod
-    def _get_mouse_region_pos(event):
+    def get_mouse_region_pos(event):
         return event.mouse_region_x, event.mouse_region_y
 
     def select_operator(self, x=None, y=None, radius=None, mode=None):
