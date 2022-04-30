@@ -94,7 +94,7 @@ class PerfectSelectTool(WorkSpaceTool):
         if ps_tool_settings.show_select_cursor:
             ps_tool_settings.update_snap_co(xy)
             props = tool.operator_properties("perfect_select.perfect_select")
-            draw_circle_2d(xy, (1.0,) * 4, props.radius, 32)
+            draw_circle_2d(xy, (1.0,) * 4, props.radius, segments=32)
 
 
 def perfect_select_menu(self, context):
@@ -124,8 +124,8 @@ def perfect_select_draw_callback(self, context):
     if self._snap_point:
         co = self._snap_point
         snap_color = (*bpy.context.preferences.themes[0].view_3d.vertex_select, 1.0)
-        draw_circle_2d(co, snap_color, 6, 16)
-    draw_circle_2d(co, (1.0,) * 4, self.radius, 32)
+        draw_circle_2d(co, snap_color, 6, segments=16)
+    draw_circle_2d(co, (1.0,) * 4, self.radius, segments=32)
 
 
 def register_keymaps():
