@@ -54,22 +54,21 @@ class PerfectSelectTool(WorkSpaceTool):
         row = layout.row()
         row.use_property_split = False
         row.prop(props, "mode", text="", expand=True, icon_only=True)
-        row.separator(factor=1.0)
+        if not is_header:
+            row.separator()
 
-        sub = row.row()
-        sub.scale_x = 0.5
+        sub = row.row(align=True)
         sub.label(icon='MOD_MIRROR')
-        sub.separator(factor=0)
         sub.prop(props, "mirror", expand=True, toggle=True, text="")
 
         tool_settings = bpy.context.scene.perfect_select_tool_settings
         sub = layout if is_header else layout.column(align=True)
 
-        sub.prop(tool_settings, "pattern_source")
+        sub.prop(tool_settings, "pattern_source", text="" if is_header else None)
         if tool_settings.pattern_source == "OBJECT":
-            sub.prop(tool_settings, "pattern_data")
+            sub.prop(tool_settings, "pattern_data", text="" if is_header else None)
         elif tool_settings.pattern_source == "IMAGE":
-            sub.prop_search(tool_settings, "pattern_data_image", bpy.data, "images")
+            sub.prop_search(tool_settings, "pattern_data_image", bpy.data, "images", text="" if is_header else None)
 
         if tool_settings.pattern_source == "OBJECT" and tool_settings.pattern_data \
                 or tool_settings.pattern_source == "IMAGE" and tool_settings.pattern_data_image:
