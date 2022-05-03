@@ -57,10 +57,13 @@ add_custom_command(TARGET scripts_and_datafiles POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/scripts/previews.py ${PerfectSelect_PACKAGE_DIR}/previews.py
         COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/scripts/properties.py ${PerfectSelect_PACKAGE_DIR}/properties.py
         COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/scripts/user_interface.py ${PerfectSelect_PACKAGE_DIR}/user_interface.py
+        COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/scripts/utils.py ${PerfectSelect_PACKAGE_DIR}/utils.py
         COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/scripts/backend/__init__.py ${PerfectSelect_PACKAGE_DIR}/backend/__init__.py
         COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/scripts/backend/select.py ${PerfectSelect_PACKAGE_DIR}/backend/select.py
         COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/scripts/backend/utils.py ${PerfectSelect_PACKAGE_DIR}/backend/utils.py
         COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/datafiles/ops.perfect_select.perfect_select.dat ${PerfectSelect_PACKAGE_DIR}/datafiles/ops.perfect_select.perfect_select.dat
-        COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/shaders/preview.frag ${PerfectSelect_PACKAGE_DIR}/shaders/preview.frag
-        COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/shaders/preview.vert ${PerfectSelect_PACKAGE_DIR}/shaders/preview.vert
+        COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/shaders/image_preview.frag ${PerfectSelect_PACKAGE_DIR}/shaders/image_preview.frag
+        COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/shaders/image_preview.vert ${PerfectSelect_PACKAGE_DIR}/shaders/image_preview.vert
+        COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/shaders/2D_line_dashed.frag ${PerfectSelect_PACKAGE_DIR}/shaders/2D_line_dashed.frag
+        COMMAND ${CMAKE_COMMAND} -E copy ${PerfectSelect_SOURCE_DIR}/shaders/2D_line_dashed.vert ${PerfectSelect_PACKAGE_DIR}/shaders/2D_line_dashed.vert
         )

@@ -32,7 +32,7 @@ Part of this addon is written in C++ to improve performance. Compilation is not 
     make
 Output files are located in `~/perfect_select_workspace/build/perfect_select`
 
-### Building with C++ backend (Linux only)
+### Building with C++ backend (Experimental - Linux only)
 #### Download Blender sources (example for blender 2.83)
     mkdir -p ~/perfect_select_workspace/blender_sources/v2.83
     cd ~/perfect_select_workspace/blender_sources/v2.83

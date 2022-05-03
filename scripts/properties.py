@@ -46,7 +46,7 @@ class PerfectSelectToolSettings(bpy.types.PropertyGroup):
     use_snap_edge_slide:        BoolProperty(name="Slide on edge loop", default=False,
                                              description="Slide on edge loop.")
     show_select_cursor:         BoolProperty(default=True)
-
+    show_selection_gizmos:      BoolProperty(name="Selection Gizmos", default=True)
     pattern_data:               PointerProperty(name="Object", description="Select pattern from object",
                                                 update=update_preview, type=bpy.types.Object, poll=filter_objects)
     pattern_data_image:         PointerProperty(name="Image", description="Select pattern from image",

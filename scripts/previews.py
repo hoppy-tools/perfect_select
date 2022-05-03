@@ -238,10 +238,10 @@ def register():
     global preview_collection, PREVIEW_SHADER_VERT, PREVIEW_SHADER_FRAG
     preview_collection = previews.new()
 
-    with open(os.path.abspath(os.path.join(__file__, '..', 'shaders', 'preview.vert')), "r") as file:
+    with open(os.path.abspath(os.path.join(__file__, '..', 'shaders', 'image_preview.vert')), "r") as file:
         PREVIEW_SHADER_VERT = file.read()
 
-    with open(os.path.abspath(os.path.join(__file__, '..', 'shaders', 'preview.frag')), "r") as file:
+    with open(os.path.abspath(os.path.join(__file__, '..', 'shaders', 'image_preview.frag')), "r") as file:
         PREVIEW_SHADER_FRAG = file.read()
 
 
@@ -251,4 +251,3 @@ def unregister():
     preview_collection = None
     PREVIEW_SHADER_VERT = None
     PREVIEW_SHADER_FRAG = None
-

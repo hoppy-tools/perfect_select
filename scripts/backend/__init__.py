@@ -41,6 +41,4 @@ def import_backend_module(module_name=None):
 
 
 def get_backend_module():
-    if backend_module is None:
-        import_backend_module()
     return backend_module

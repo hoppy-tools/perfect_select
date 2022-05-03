@@ -7,6 +7,8 @@ from .utils import (matrix_decompose_4x4, is_backface,
                     points_3d_to_region_2d, points_pairs_3d_to_region_2d,
                     region_2d_to_points_3d)
 
+from ..user_interface import perfect_select_draw_callback
+from ..previews import get_selection_pattern_buffer
 
 #
 # Extend to edge loops functions
@@ -109,21 +111,112 @@ def get_loop_edges(bms):
 #
 
 def perfect_select_invoke(context, event, operator):
+    operator.draw_area = context.area
+    operator.snap_point = None
     operator.x, operator.y = Helper.get_mouse_region_pos(event)
+    tool_settings = Helper.get_tool_settings(context)
+    tool_settings.show_select_cursor = False
+
+    if not operator.wait_for_input:
+        if tool_settings.pattern_source in ("OBJECT", "IMAGE"):
+            operator.pattern_buffer = get_selection_pattern_buffer(tool_settings.pattern_resolution)
+
+        if operator.mode == "SET":
+            tool = Helper.get_tool(context)
+            if tool is not None:
+                props = tool.operator_properties("perfect_select.perfect_select")
+                operator.mode = props.mode
+        operator.execute(context)
+    else:
+        operator._select_enabled = False
+
+    wm = context.window_manager
+    if context.area.type == 'VIEW_3D':
+        ws = context.workspace
+        ws.status_text_set(Helper.get_status_text(operator))
+
+        handler_args = (operator, context)
+        operator.draw_handle = bpy.types.SpaceView3D.draw_handler_add(perfect_select_draw_callback,
+                                                                      handler_args,
+                                                                      'WINDOW', 'POST_PIXEL')
+        wm.modal_handler_add(operator)
+
+    return {'RUNNING_MODAL'}
 
 
 def perfect_select_execute(context, operator):
-    # C++ module execution
-    try:
-        result = cpp_perfect_select(context, operator)
-    except RuntimeError:
-        # Python fallback
+    if get_backend_module() is None:
         result = py_perfect_select(context, operator)
+    else:
+        result = cpp_perfect_select(context, operator)
     return result
 
 
 def perfect_select_modal(context, event, operator):
-    pass
+    context.area.tag_redraw()
+    tool_settings = Helper.get_tool_settings(context)
+
+    if not operator.wait_for_input and event.type in ['LEFT_SHIFT', 'LEFT_CTRL']:
+        if event.value == 'PRESS':
+            operator._extend_to_loop = event.shift
+        if event.value == 'RELEASE':
+            operator._extend_to_loop = None
+
+    if event.type in {'RIGHTMOUSE', 'ESC'}:
+        bpy.types.SpaceView3D.draw_handler_remove(operator.draw_handle, 'WINDOW')
+        tool_settings.show_select_cursor = True
+        operator.clean_status_text(context)
+        return {'CANCELLED'}
+
+    if event.type in ['MOUSEMOVE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'LEFT_SHIFT', 'LEFT_CTRL']:
+        operator.x, operator.y = Helper.get_mouse_region_pos(event)
+    #     if (self.wait_for_input and self._select_enabled) or not self.wait_for_input:
+    #         self.execute(context)
+    #
+    if event.type in ('WHEELUPMOUSE', 'WHEELDOWNMOUSE') and not event.ctrl:
+        if event.type == 'WHEELDOWNMOUSE':
+            operator.radius += int(2 + operator.radius / 10)
+        else:
+            operator.radius -= int(2 + operator.radius / 10)
+    #     return {'RUNNING_MODAL'}
+    #
+    # if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+    #     self._select_enabled = True
+    #     if event.shift and self.wait_for_input:
+    #         self.mode = "SUB"
+    #     self.execute(context)
+    #
+    # if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+    #     if self.wait_for_input:
+    #         self._select_enabled = False
+    #         self.mode = "ADD"
+    #         self._clean()
+    #         return {'RUNNING_MODAL'}
+    #     else:
+    #         self._clean_status_text(context)
+    #
+    #     self.wait_for_input = True
+    #     self.mode = "ADD"
+    #     bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, 'WINDOW')
+    #     ps_tool_settings.show_select_cursor = True
+    #     self._clean_tags(context)
+    #     return {'FINISHED'}
+    #
+    # if event.type == 'LEFTMOUSE' and event.shift and event.value == 'RELEASE':
+    #     if self.wait_for_input:
+    #         self._select_enabled = False
+    #         self.mode = "ADD"
+    #         self._clean()
+    #         return {'RUNNING_MODAL'}
+    #
+    # if event.type == "RET" and event.value == 'PRESS':
+    #     bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, 'WINDOW')
+    #     self.wait_for_input = True
+    #     ps_tool_settings.show_select_cursor = True
+    #     self._clean_tags(context)
+    #     return {'FINISHED'}
+
+    return {'RUNNING_MODAL'}
 
 
 def cpp_perfect_select(context, operator):
@@ -154,24 +247,52 @@ def select_operator(self, x=None, y=None, radius=None, mode=None):
                                   wait_for_input=False, mode=mode)
 
 
-
 #
 # Helpers
 #
 
+
 class Helper:
-    @staticmethod
-    def get_mouse_region_pos(event):
+    @classmethod
+    def get_mouse_region_pos(cls, event):
         return event.mouse_region_x, event.mouse_region_y
 
-    def select_operator(self, x=None, y=None, radius=None, mode=None):
-        x = x or self.x
-        y = y or self.y
-        radius = radius or self.radius
-        mode = mode or self.mode
+    @classmethod
+    def get_tool(cls, context):
+        tool = context.workspace.tools.from_space_view3d_mode(context.mode)
+        return tool if tool.idname == "perfect_select.perfect_select_tool" else None
 
-        tool_settings = bpy.context.scene.perfect_select_tool_settings
-        if self.wait_for_input or tool_settings.pattern_source == "CIRCLE":
+    @classmethod
+    def get_tool_settings(cls, context):
+        return context.scene.perfect_select_tool_settings
+
+    @classmethod
+    def get_status_text(cls, operator):
+        elements = [("WhDown/Pad+", "Add"),
+                    ("WhUp/Pad-", "Subtract")]
+
+        if operator.wait_for_input:
+            release_elements = [("ESC/RMB", "Cancel"),
+                                ("Enter↵", "Confirm")]
+            input_elements = [("LMB", "Select"), ("Shift⇧ LMB", "Deselect")]
+            elements = release_elements + elements + input_elements
+        else:
+            extend_elements = [("Shift⇧", "Extend to Widest Boundary Loops"),
+                               # ("Ctrl", "Reduce to Narrowest Boundary Loops")
+                               ]
+            elements.extend(extend_elements)
+
+        return "        ".join("[{}] {}".format(*e) for e in elements)
+
+    @classmethod
+    def select_operator(cls, operator, context, x=None, y=None, radius=None, mode=None):
+        x = x or operator.x
+        y = y or operator.y
+        radius = radius or operator.radius
+        mode = mode or operator.mode
+
+        tool_settings = cls.get_tool_settings(context)
+        if operator.wait_for_input or tool_settings.pattern_source == "CIRCLE":
             bpy.ops.view3d.select_circle('EXEC_DEFAULT', x=x, y=y,
                                          wait_for_input=False, mode=mode, radius=radius)
         else:
@@ -510,20 +631,15 @@ class Helper:
         self._snap_edge = None
         self._snap_edge_co = None
 
-    def _clean_tags(self, context):
+    def clean_tags(self, context):
         tagged_geom = (g for g in self._get_bms_geom_iter(context) if g.tag)
         for geom_element in tagged_geom:
             geom_element.tag = False
 
-    def _clean_status_text(self, context):
-        context.workspace.status_text_set(None)
 
-    def _get_tool_settings(self, context):
-        return context.scene.perfect_select_tool_settings
 
-    def _get_ps_tool(self, context):
-        tool = context.workspace.tools.from_space_view3d_mode(context.mode)
-        return tool if tool.idname == "perfect_select.perfect_select_tool" else None
+
+
 
     def _check_init_attribs(self, force=False):
         names = ("_set_continue", "_bms", "_snap_point", "_snap_edge", "_snap_edge_co", "_loop",
@@ -533,22 +649,7 @@ class Helper:
                 setattr(self, name, None)
 
 
-    def _get_status_text(self):
-        elements = [("WhDown/Pad+", "Add"),
-                    ("WhUp/Pad-", "Subtract")]
 
-        if self.wait_for_input:
-            release_elements = [("ESC/RMB", "Cancel"),
-                                ("Enter↵", "Confirm")]
-            input_elements = [("LMB", "Select"), ("Shift⇧ LMB", "Deselect")]
-            elements = release_elements + elements + input_elements
-        else:
-            extend_elements = [("Shift⇧", "Extend to Widest Boundary Loops"),
-                               # ("Ctrl", "Reduce to Narrowest Boundary Loops")
-                               ]
-            elements.extend(extend_elements)
-
-        return "        ".join("[{}] {}".format(*e) for e in elements)
 
     @staticmethod
     def get_ps_tool(context):
